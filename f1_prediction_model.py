@@ -9,21 +9,12 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import signal
 import sys
-
-# Add a timeout handler
-class TimeoutException(Exception):   # Custom exception class
-    pass
-
-def timeout_handler(signum, frame):
-    raise TimeoutException
-
-# Set the timeout handler
-signal.signal(signal.SIGALRM, timeout_handler)
+from datetime import datetime
 
 class F1PredictionModel:
-    def __init__(self, start_year=2018, end_year=2020):  # Reduced year range
+    def __init__(self, start_year=2020, end_year=2025):
         self.start_year = start_year
-        self.end_year = end_year
+        self.end_year = min(end_year, datetime.now().year)  # Ensure we don't go beyond current year
         self.model = None
         self.scaler = StandardScaler()
         self.race_data = None
@@ -39,8 +30,8 @@ class F1PredictionModel:
                 # Get event schedule using correct method
                 event_schedule = fastf1.get_event_schedule(year)
                 
-                # Limit to first 5 events to prevent long runtime
-                for index, event in event_schedule.head(5).iterrows():
+                # Limit to first 10 events to prevent long runtime
+                for index, event in event_schedule.head(10).iterrows():
                     try:
                         # Use event name from the schedule
                         event_name = event['EventName']
@@ -78,14 +69,18 @@ class F1PredictionModel:
                             
                             all_race_data.append(race_features)
                     
-                    except Exception:
-                        continue
+                    except Exception as event_error:
+                        print(f"Error processing {event_name} in {year}: {event_error}")
             
-            except Exception:
-                continue
+            except Exception as year_error:
+                print(f"Error processing year {year}: {year_error}")
         
         # Convert to DataFrame
         self.race_data = pd.DataFrame(all_race_data)
+        
+        # Print data collection summary
+        print(f"Data collected from {self.start_year} to {self.end_year}")
+        print(f"Total races collected: {len(self.race_data)}")
         
         return self.race_data
     
@@ -165,17 +160,18 @@ class F1PredictionModel:
 # Example usage
 if __name__ == "__main__":
     # Set a 5-minute timeout
+    signal.signal(signal.SIGALRM, lambda signum, frame: exec('raise TimeoutError("Process timed out")'))
     signal.alarm(300)
     
     try:
         # Initialize and train the model
-        f1_predictor = F1PredictionModel(start_year=2018, end_year=2020)
+        f1_predictor = F1PredictionModel(start_year=2020, end_year=2025)
         f1_predictor.train_model()
         
         # Cancel the alarm
         signal.alarm(0)
     
-    except TimeoutException:
+    except TimeoutError:
         print("Process timed out after 5 minutes")
         sys.exit(1)
     except Exception as e:
