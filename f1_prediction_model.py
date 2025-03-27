@@ -14,6 +14,7 @@ class F1PredictionModel:
         self.end_year = end_year
         self.model = None
         self.scaler = StandardScaler()
+        self.race_data = None
         
     def collect_historical_data(self):
         """
@@ -23,49 +24,89 @@ class F1PredictionModel:
         
         for year in range(self.start_year, self.end_year + 1):
             try:
-                # Collect data for each Grand Prix
-                for event in fastf1.get_event_schedule(year):
+                # Get event schedule using correct method
+                event_schedule = fastf1.get_event_schedule(year)
+                
+                # Print events to debug
+                print(f"Events for {year}:")
+                print(event_schedule)
+                
+                # Iterate through events
+                for index, event in event_schedule.iterrows():
                     try:
+                        # Use event name from the schedule
+                        event_name = event['EventName']
+                        
                         # Load race session
-                        race_session = fastf1.get_session(year, event.EventName, 'R')
+                        race_session = fastf1.get_session(year, event_name, 'R')
                         race_session.load()
                         
-                        # Extract key features for each driver
-                        for driver in race_session.results['Driver']:
-                            driver_laps = race_session.laps.pick_driver(driver)
+                        # Extract results
+                        results = race_session.results
+                        
+                        # Print results to debug
+                        print(f"Results for {event_name} {year}:")
+                        print(results)
+                        
+                        # Feature extraction for each driver
+                        for index, driver_result in results.iterrows():
+                            driver = driver_result['Driver']
                             
-                            # Feature extraction
+                            # Safely extract driver laps
+                            try:
+                                driver_laps = race_session.laps.pick_driver(driver)
+                            except Exception as lap_error:
+                                print(f"Error getting laps for {driver}: {lap_error}")
+                                continue
+                            
+                            # Feature extraction with error handling
                             race_features = {
                                 'Year': year,
-                                'Grand Prix': event.EventName,
+                                'Grand Prix': event_name,
                                 'Driver': driver,
-                                'Team': race_session.results[race_session.results['Driver'] == driver]['Team'].values[0],
-                                'Average_Lap_Time': driver_laps['LapTime'].mean().total_seconds(),
-                                'Fastest_Lap': driver_laps.pick_fastest()['LapTime'].total_seconds(),
+                                'Team': driver_result.get('Team', 'Unknown'),
+                                'Average_Lap_Time': driver_laps['LapTime'].mean().total_seconds() if len(driver_laps) > 0 else np.nan,
+                                'Fastest_Lap': driver_laps.pick_fastest()['LapTime'].total_seconds() if len(driver_laps) > 0 else np.nan,
                                 'Number_of_Laps': len(driver_laps),
-                                'Qualifying_Position': race_session.results[race_session.results['Driver'] == driver]['GridPosition'].values[0],
-                                'Final_Position': race_session.results[race_session.results['Driver'] == driver]['Position'].values[0],
-                                'Finished_Race': 1 if race_session.results[race_session.results['Driver'] == driver]['Status'].values[0] == 'Finished' else 0
+                                'Qualifying_Position': driver_result.get('GridPosition', np.nan),
+                                'Final_Position': driver_result.get('Position', np.nan),
+                                'Finished_Race': 1 if driver_result.get('Status', '') == 'Finished' else 0
                             }
                             
                             all_race_data.append(race_features)
                     
-                    except Exception as session_error:
-                        print(f"Error processing {event.EventName} in {year}: {session_error}")
+                    except Exception as event_error:
+                        print(f"Error processing {event_name} in {year}: {event_error}")
             
             except Exception as year_error:
                 print(f"Error processing year {year}: {year_error}")
         
         # Convert to DataFrame
         self.race_data = pd.DataFrame(all_race_data)
+        
+        # Print DataFrame to debug
+        print("Collected Race Data:")
+        print(self.race_data)
+        print(self.race_data.columns)
+        
         return self.race_data
     
     def prepare_data(self):
         """
         Prepare data for machine learning model
         """
+        # Drop rows with NaN values
+        race_data_cleaned = self.race_data.dropna()
+        
+        # Ensure we have data
+        if len(race_data_cleaned) == 0:
+            raise ValueError("No valid data found after cleaning")
+        
         # One-hot encode categorical features
-        race_data_encoded = pd.get_dummies(self.race_data, columns=['Driver', 'Team', 'Grand Prix'])
+        race_data_encoded = pd.get_dummies(
+            race_data_cleaned, 
+            columns=['Driver', 'Team', 'Grand Prix']
+        )
         
         # Select features and target
         features = race_data_encoded.drop(['Final_Position', 'Year'], axis=1)
@@ -88,7 +129,12 @@ class F1PredictionModel:
         """
         # Collect and prepare data
         self.collect_historical_data()
-        X_train, X_test, y_train, y_test = self.prepare_data()
+        
+        try:
+            X_train, X_test, y_train, y_test = self.prepare_data()
+        except Exception as prep_error:
+            print("Error preparing data:", prep_error)
+            return None
         
         # Initialize and train the model
         self.model = RandomForestClassifier(
@@ -136,18 +182,3 @@ if __name__ == "__main__":
     # Initialize and train the model
     f1_predictor = F1PredictionModel(start_year=2018, end_year=2023)
     f1_predictor.train_model()
-    
-    # Example prediction (you would need to prepare actual driver features)
-    example_driver_features = [
-        # Prepare your driver's specific features here
-        # This is a placeholder and would need actual data
-        0.5,  # Average Lap Time
-        45.2,  # Fastest Lap
-        50,    # Number of Laps
-        5,     # Qualifying Position
-        1      # Finished Previous Race
-    ]
-    
-    prediction = f1_predictor.predict_race_outcome(example_driver_features)
-    print("Prediction Probabilities for Different Finishing Positions:")
-    print(prediction)
