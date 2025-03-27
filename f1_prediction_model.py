@@ -7,9 +7,21 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
+import signal
+import sys
+
+# Add a timeout handler
+class TimeoutException(Exception):   # Custom exception class
+    pass
+
+def timeout_handler(signum, frame):
+    raise TimeoutException
+
+# Set the timeout handler
+signal.signal(signal.SIGALRM, timeout_handler)
 
 class F1PredictionModel:
-    def __init__(self, start_year=2018, end_year=2023):
+    def __init__(self, start_year=2018, end_year=2020):  # Reduced year range
         self.start_year = start_year
         self.end_year = end_year
         self.model = None
@@ -27,12 +39,8 @@ class F1PredictionModel:
                 # Get event schedule using correct method
                 event_schedule = fastf1.get_event_schedule(year)
                 
-                # Print events to debug
-                print(f"Events for {year}:")
-                print(event_schedule)
-                
-                # Iterate through events
-                for index, event in event_schedule.iterrows():
+                # Limit to first 5 events to prevent long runtime
+                for index, event in event_schedule.head(5).iterrows():
                     try:
                         # Use event name from the schedule
                         event_name = event['EventName']
@@ -44,10 +52,6 @@ class F1PredictionModel:
                         # Extract results
                         results = race_session.results
                         
-                        # Print results to debug
-                        print(f"Results for {event_name} {year}:")
-                        print(results)
-                        
                         # Feature extraction for each driver
                         for index, driver_result in results.iterrows():
                             driver = driver_result['Driver']
@@ -55,8 +59,7 @@ class F1PredictionModel:
                             # Safely extract driver laps
                             try:
                                 driver_laps = race_session.laps.pick_driver(driver)
-                            except Exception as lap_error:
-                                print(f"Error getting laps for {driver}: {lap_error}")
+                            except Exception:
                                 continue
                             
                             # Feature extraction with error handling
@@ -75,19 +78,14 @@ class F1PredictionModel:
                             
                             all_race_data.append(race_features)
                     
-                    except Exception as event_error:
-                        print(f"Error processing {event_name} in {year}: {event_error}")
+                    except Exception:
+                        continue
             
-            except Exception as year_error:
-                print(f"Error processing year {year}: {year_error}")
+            except Exception:
+                continue
         
         # Convert to DataFrame
         self.race_data = pd.DataFrame(all_race_data)
-        
-        # Print DataFrame to debug
-        print("Collected Race Data:")
-        print(self.race_data)
-        print(self.race_data.columns)
         
         return self.race_data
     
@@ -158,27 +156,28 @@ class F1PredictionModel:
         plt.title('Confusion Matrix of F1 Race Outcome Prediction')
         plt.xlabel('Predicted Position')
         plt.ylabel('Actual Position')
-        plt.show()
+        plt.tight_layout()
+        plt.savefig('confusion_matrix.png')  # Save instead of show
+        plt.close()  # Close the plot
         
         return self.model
-    
-    def predict_race_outcome(self, driver_features):
-        """
-        Predict race outcome for given driver features
-        """
-        if self.model is None:
-            raise ValueError("Model must be trained first. Call train_model() first.")
-        
-        # Scale input features
-        scaled_features = self.scaler.transform([driver_features])
-        
-        # Predict probability of different finishing positions
-        position_probabilities = self.model.predict_proba(scaled_features)
-        
-        return position_probabilities
 
 # Example usage
 if __name__ == "__main__":
-    # Initialize and train the model
-    f1_predictor = F1PredictionModel(start_year=2018, end_year=2023)
-    f1_predictor.train_model()
+    # Set a 5-minute timeout
+    signal.alarm(300)
+    
+    try:
+        # Initialize and train the model
+        f1_predictor = F1PredictionModel(start_year=2018, end_year=2020)
+        f1_predictor.train_model()
+        
+        # Cancel the alarm
+        signal.alarm(0)
+    
+    except TimeoutException:
+        print("Process timed out after 5 minutes")
+        sys.exit(1)
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        sys.exit(1)
